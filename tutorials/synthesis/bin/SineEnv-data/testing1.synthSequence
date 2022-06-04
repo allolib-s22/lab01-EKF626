@@ -1,0 +1,19 @@
+@  3 5 SineEnv 0.3 554.37 0.011 0.2 0.0
+@  5 3 SineEnv 0.3 622.25 0.011 0.2 0.0
+
+@  1 4 SineEnv 0.3 329.63 0.011 0.2 0.0
+@  1 4 SineEnv 0.3 277.18 0.011 0.2 0.0
+@  5 3 SineEnv 0.3 493.88 0.011 0.2 0.0
+@  5 3 SineEnv 0.3 415.3 0.011 0.2 0.0
+
+
+@  1 7 SineEnv 0.3 329.63 0.011 0.2 0.0
+@  5 3 SineEnv 0.3 311.13 0.011 0.2 0.0
+
+@  1 7 SineEnv 0.3 277.18 0.011 0.2 0.0
+@  5 3 SineEnv 0.3 207.65 0.011 0.2 0.0
+
+
+
+
+# [start time] [duration] SineEnv [amplitude] [frequency] [attackTime] [releaseTime] [pan] 
