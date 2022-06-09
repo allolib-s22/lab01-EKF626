@@ -16,10 +16,11 @@ using namespace al;
 
 Timer timer;
 
+bool crownCreated = false;
+bool autoDeselect = false;
+
 const float gravity = 0.01;
 const double rateMax = 0.2;
-
-std::vector<int> selectedNotes {};
 
 const float C4 = 261.62;
 const float Csharp4 = 277.18;
@@ -35,6 +36,8 @@ const float Asharp4 = 466.16;
 const float B4 = 493.88;
 const float C5 = 523.25;
 
+std::vector<float> Notes {C4, Csharp4, D4, Dsharp4, E4, F4, Fsharp4, G4, Gsharp4, A4, Asharp4, B4, C5};
+
 struct Piece {
     double baseX;
     double baseZ;
@@ -44,13 +47,13 @@ struct Piece {
     int reachedNewTarget;
     double hue;
     double size;
+    bool selected;
+    double octaveMod;
     void updatePiece();
     void setNewTarget(double target);
     void changeSize(double amount);
     void resetSize();
 };
-
-bool crownCreated = false;
 
 std::vector<Piece> Pieces {};
 std::vector<Piece*> SortedPiecePointers {};
@@ -84,6 +87,11 @@ void Piece::updatePiece() {
             yRate = rateMax*-1;
         }
         currentY += yRate;
+
+        hue += 0.0005;
+        if (hue > 1) {
+            hue -= 1;
+        }
 }
 
 void Piece::setNewTarget(double target) {
@@ -200,17 +208,77 @@ void changeVolume(int index, double amount) {
 }
 
 void modifyPieces(int position, float pitch) {
-    for (size_t i = 0; i < selectedNotes.size(); i++) {
-        Pieces[selectedNotes[i]].setNewTarget(position);
-        Voices[selectedNotes[i]]->setInternalParameterValue("frequency", pitch);
+    for (size_t i = 0; i < Pieces.size(); i++) {
+        if (Pieces[i].selected) {
+            Pieces[i].setNewTarget(position);
+            Voices[i]->setInternalParameterValue("frequency", Pieces[i].octaveMod*pitch);
+            if (autoDeselect) {
+                Pieces[i].selected = false;
+            }           
+        }
+    }
+}
 
+void shiftPiecesDown() {
+    for (size_t i = 0; i < Pieces.size(); i++) {
+        if (Pieces[i].selected) {
+            if (Pieces[i].targetY > -12) {
+                Pieces[i].targetY -= 2;
+            }
+            for (size_t j = 0; j < Notes.size(); j++) {
+                if (Voices[i]->getInternalParameterValue("frequency") == Pieces[i].octaveMod*Notes[j] && j > 0) {
+                    Voices[i]->setInternalParameterValue("frequency", Pieces[i].octaveMod*Notes[j-1]);
+                    break;
+                }
+            }
+        }
+    }
+}
+
+void shiftPiecesUp() {
+    for (size_t i = 0; i < Pieces.size(); i++) {
+        if (Pieces[i].selected) {
+            if (Pieces[i].targetY < 12) {
+                Pieces[i].targetY += 2;
+            }
+            for (size_t j = 0; j < Notes.size(); j++) {
+                if (Voices[i]->getInternalParameterValue("frequency") == Pieces[i].octaveMod*Notes[j] && j < Notes.size()-1) {
+                    Voices[i]->setInternalParameterValue("frequency", Pieces[i].octaveMod*Notes[j+1]);
+                    break;
+                }
+            }
+        }
+    }
+}
+
+void modifyOctaves(double mod) {
+    for (size_t i = 0; i < Pieces.size(); i++) {
+        if (Pieces[i].selected) {
+            Pieces[i].octaveMod *= mod;
+            Voices[i]->setInternalParameterValue("frequency", mod*Voices[i]->getInternalParameterValue("frequency"));
+        }
+    }
+}
+
+void resetOctaves() {
+    for (size_t i = 0; i < Pieces.size(); i++) {
+        while (Pieces[i].octaveMod > 1) {
+            Voices[i]->setInternalParameterValue("frequency", 0.5*Voices[i]->getInternalParameterValue("frequency"));
+            Pieces[i].octaveMod *= 0.5;
+        }
+        while (Pieces[i].octaveMod < 1) {
+            Voices[i]->setInternalParameterValue("frequency", 2*Voices[i]->getInternalParameterValue("frequency"));
+            Pieces[i].octaveMod *= 2;
+        }
     }
 }
 
 void scalePieces(int direction) {
-    for (size_t i = 0; i < selectedNotes.size(); i++) {
-        Pieces[selectedNotes[i]].changeSize(0.15*direction);
-        changeVolume(selectedNotes[i], 0.01*direction);
+    for (size_t i = 0; i < Pieces.size(); i++) {
+        if (Pieces[i].selected) {
+            Pieces[i].changeSize(0.15*direction);
+            changeVolume(i, 0.01*direction);
+        }
     }
 }
 
@@ -227,7 +295,7 @@ class MyApp : public App
 public:
   SynthGUIManager<SquareWave> synthManager{"SquareWave"};
 
-  Mesh mMesh;
+  // Mesh mMesh;
 
   void onCreate() override
   {
@@ -239,7 +307,7 @@ public:
 
     synthManager.synthRecorder().verbose(true);
 
-    addSphere(mMesh, 1.0);
+    // addSphere(mMesh, 1.0);
   }
 
   void onSound(AudioIOData &io) override
@@ -263,8 +331,22 @@ public:
         g.pushMatrix();
         g.translate(SortedPiecePointers[i]->baseX, SortedPiecePointers[i]->currentY, SortedPiecePointers[i]->baseZ);
         g.scale(SortedPiecePointers[i]->size);
-        HSV newColor {static_cast<float>(SortedPiecePointers[i]->hue), 0.75, 1};
+        float H = SortedPiecePointers[i]->hue;
+        float S = 0.55*!SortedPiecePointers[i]->selected+0.2;
+        float V = 1;
+        //HSV newColor {static_cast<float>(SortedPiecePointers[i]->hue), 0.75*SortedPiecePointers[i]->selected, 1};
+        HSV newColor {H, S, V};
         g.color(newColor);
+        Mesh mMesh;
+        if (SortedPiecePointers[i]->octaveMod == 1) {
+            addSphere(mMesh, 1.0);
+        }
+        else if (SortedPiecePointers[i]->octaveMod < 1) {
+            addCube(mMesh, false, 1.0);
+        }
+        else if (SortedPiecePointers[i]->octaveMod > 1) {
+            addAnnulus(mMesh);
+        }
         g.draw(mMesh);
         g.popMatrix();
     }
@@ -290,102 +372,104 @@ public:
 
     case '1' : {
         if (1 <= Pieces.size()) {
-           selectedNotes.push_back(0); 
+           Pieces[0].selected = !Pieces[0].selected;
         }
         return false;
     }
     case '2' : {
         if (2 <= Pieces.size()) {
-           selectedNotes.push_back(1); 
+           Pieces[1].selected = !Pieces[1].selected; 
         }
         return false;
     }
     case '3' : {
         if (3 <= Pieces.size()) {
-           selectedNotes.push_back(2); 
+           Pieces[2].selected = !Pieces[2].selected;
         }        return false;
     }
     case '4' : {
         if (4 <= Pieces.size()) {
-           selectedNotes.push_back(3); 
+           Pieces[3].selected = !Pieces[3].selected;
         }        return false;
     }
     case '5' : {
         if (5 <= Pieces.size()) {
-           selectedNotes.push_back(4); 
+           Pieces[4].selected = !Pieces[4].selected;
         }        return false;
     }
     case '6' : {
         if (6 <= Pieces.size()) {
-           selectedNotes.push_back(5); 
+           Pieces[5].selected = !Pieces[5].selected;
         }        return false;
     }
     case '7' : {
         if (7 <= Pieces.size()) {
-           selectedNotes.push_back(6); 
+           Pieces[6].selected = !Pieces[6].selected; 
         }        return false;
     }
     case '8' : {
         for (int i = 0; i < Pieces.size(); i++) {
-            selectedNotes.push_back(i);
+            Pieces[i].selected = true;
         }
         return false;
     }
     case 96 : {     // ~ key
-        selectedNotes.clear();
+        for (size_t i = 0; i < Pieces.size(); i++) {
+            Pieces[i].selected = false;
+        }
         return false;
     }
 
     case 'z' : {
-        modifyPieces(-12, C4);
+        modifyPieces(-12, Notes[0]);
         return false;
     }
     case 's' : {
-        modifyPieces(-10, Csharp4);
+        modifyPieces(-10, Notes[1]);
         return false;
     }
     case 'x' : {
-        modifyPieces(-8, D4);
+        modifyPieces(-8, Notes[2]);
         return false;
     }
     case 'd' : {
-        modifyPieces(-6, Dsharp4);
+        modifyPieces(-6, Notes[3]);
         return false;
     }
     case 'c' : {
-        modifyPieces(-4, E4);
+        modifyPieces(-4, Notes[4]);
         return false;
     }
     case 'v' : {
-        modifyPieces(-2, F4);
+        modifyPieces(-2, Notes[5]);
         return false;
     }
     case 'g' : {
-        modifyPieces(0, Fsharp4);
+        modifyPieces(0, Notes[6]);
         return false;
     }
     case 'b' : {
-        modifyPieces(2, G4);
+        modifyPieces(2, Notes[7]);
         return false;
     }
     case 'h' : {
-        modifyPieces(4, Gsharp4);
+        modifyPieces(4, Notes[8]);
         return false;
     }
     case 'n' : {
-        modifyPieces(6, A4);
+        modifyPieces(6, Notes[9]);
         return false;
     }
     case 'j' : {
-        modifyPieces(8, Asharp4);
+        modifyPieces(8, Notes[10]);
         return false;
     }
     case 'm' : {
-        modifyPieces(10, B4);
+        modifyPieces(10, Notes[11]);
         return false;
     }
     case ',' : {
-        modifyPieces(12, C5);
+        modifyPieces(12, Notes[12]);
         return false;
     }
 
@@ -394,10 +478,10 @@ public:
             crownCreated = true;
             int circleNum = 3;
             for (int i = 0; i < circleNum; i ++) {
-                playNote(Fsharp4, 0, 100, 0.05);
+                playNote(Fsharp4, 0, 1000, 0.05);
                 double x = 3*cos((i*360.0/circleNum)*3.141592/180);
                 double z = -50.0 + 3*sin((i*360.0/circleNum)*3.141592/180);
-                Piece newPiece {x, z, 0, 0, rateMax, 0, i*1.0/circleNum, 1};
+                Piece newPiece {x, z, 0, 0, rateMax, 0, i*1.0/circleNum, 1, false, 1};
                 Pieces.push_back(newPiece);
             }
             createSortedPointers();
@@ -409,10 +493,10 @@ public:
             crownCreated = true;
             int circleNum = 7;
             for (int i = 0; i < circleNum; i ++) {
-                playNote(Fsharp4, 0, 100, 0.05);
+                playNote(Fsharp4, 0, 1000, 0.05);
                 double x = 3*cos((i*360.0/circleNum)*3.141592/180);
                 double z = -50.0 + 3*sin((i*360.0/circleNum)*3.141592/180);
-                Piece newPiece {x, z, 0, 0, rateMax, 0, i*1.0/circleNum, 1};
+                Piece newPiece {x, z, 0, 0, rateMax, 0, i*1.0/circleNum, 1, false, 1};
                 Pieces.push_back(newPiece);
             }
             createSortedPointers();
@@ -420,6 +504,10 @@ public:
         }
     }
 
+    case 0 : {      // shift
+        resetPieceSizes();
+        return false;
+    }
     case 270 : {    // up arrow
         scalePieces(1);
         return false;
@@ -429,7 +517,29 @@ public:
         return false;
     }
     case 269 : {    // left arrow
-        resetPieceSizes();
+        shiftPiecesDown();
+        return false;
+    }
+    case 271 : {    // right array
+        shiftPiecesUp();
+        return false;
+    }
+
+    case 91 : {     // {
+        modifyOctaves(0.5);
+        return false;
+    }
+    case 93 : {     // }
+        modifyOctaves(2);
+        return false;
+    }
+    case 92 : {     // |
+        resetOctaves();
+        return false;
+    }
+
+    case 3 : {      // enter
+        autoDeselect = !autoDeselect;
         return false;
     }
 
@@ -473,3 +583,19 @@ int main()
 
   return 0;
 }
+
+/*
+
+w + e     create 3 or 7 pieces
+1-7         selects/deselects the notes
+~           deselects all pieces
+8           selects all pieces
+bottom letters correspond to notes
+up and down make pieces larger and smaller
+shift       resets all piece sizes
+left + right moves selected pieces up and down
+{ }         brings select pieces' octaves up and down
+|           resets octaves
+enter       toggle autodeselect
+
+*/
